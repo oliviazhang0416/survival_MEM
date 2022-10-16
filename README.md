@@ -1,7 +1,12 @@
 # survival_MEM
 
-surv_v2.Rmd: the file that contains the code to do the simulation
+File description:
 
-result.Rmd: the file to plot the results
+1. surv_v2.Rmd 
+   the file that contains the code to do the simulation
 
-gen_data_v2.R: the code to generate the data
+2. result.Rmd
+   the file to plot the results
+
+3. gen_data_v2.R 
+   the code to generate the data
