@@ -1,0 +1,381 @@
+---
+title: "Simulation with Survial data (with observed confounders)"
+output:
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning= F, message = F)
+rm(list=ls(all=TRUE))
+```
+```{r, echo=F,warning=F}
+setwd("/Users/oliviazhang/Desktop/MEM")
+library(MASS)
+library(foreach)
+library(RBesT)
+library(ggpubr)
+library(TeachingDemos)
+library(PSweight)
+library(ggplot2)
+library(foreach)
+library(psrwe)
+library(survival)
+library(data.table)
+source("/Users/oliviazhang/Desktop/MEM/survival/gen_data_v2.R")
+```
+
+
+
+The data is simulated with true treatment effect $\delta$ = 1, 2
+$$
+T_{1} \sim Weibull(\lambda_1=e^{X^T\beta+log(\delta)},k=1)
+$$
+
+$$
+T_{0} \sim Weibull(\lambda_0= e^{X^T\beta},k=1)
+$$
+
+$$
+f(t)=\frac{1}{\lambda}e^{-(t/\lambda)^k},k=1
+$$
+
+
+Survival function:
+$$
+S(t) = 1-F(t)=e^{-(t/\lambda)^k}=e^{-t/\lambda}, k=1
+$$
+
+Ratio of Survival function:
+
+$$
+\frac{S_1(t)}{S_0(t)} = \frac{1-F_1(t)}{1-F_0(t)}=\frac{e^{-t/\lambda_1}}{e^{-t/\lambda_0}}=\frac{ e^{-t/ e^{X^T \beta +log(\delta)}}}{e^{-t/e^{X^T \beta }}}
+$$
+
+Ratio of Hazard function under alternative:
+$$
+\frac{h_1(t)}{h_0(t)} = \frac{1/\lambda_1}{1/\lambda_0}= \frac{\lambda_0}{\lambda_1}= \frac{e^{X^T\beta}}{ e^{X^T\beta+log(\delta)}}=\frac{1}{\delta}=\frac{1}{2}=0.5
+$$
+
+$$
+\frac{h_1(t)}{h_{1,baseline}(t)}/\frac{h_0(t)}{h_{0,baseline}(t)}=exp(\beta_1)\approx \frac{1}{\delta}= 0.5
+$$
+
+## Sample size 
+
+External = 1000
+\
+Internal trt = 50
+\
+Internal ctrl = 25
+
+```{r,echo=F}
+EX_des <- data.frame("xname" = c("age", "sex", "race", "ecog", 
+                                 "strong_pos_effect", "strong_neg_effect",
+                                 "moderate_pos_effect","moderate_pos_effect"), 
+                          "binary" = c(FALSE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE),
+                          "theta" = c(NA, 0.43, 0.58, 0.54, 0.62, 0.64, 0.5, 0.5), 
+                          "mu" = c(57, 0, 0, 0, 0, 0, 0, 0), 
+                          "sd" = c(9.6, 1, 1, 1, 1, 1, 1, 1),
+                          "coef" = c(0, 0.2, 0.2, 0.2, 
+                                     0.9, -0.9, 
+                                     0.5, -0.5), 
+                          #"coef" = c(0, 0.2, 0.2, 0.5, 1, -0.5),
+                          "intercept" = -0.95)
+effect <- c(1,2)
+censor_t <- 5
+
+## sample size of external control data:
+EX_dta <- gen_surv_dat(dta_des = EX_des, n = 1000, 
+                       source = "external",
+                       TE = 1,
+                       censor_t = censor_t, 
+                       seeds = sample(1:100000,1))
+EX_N <- nrow(EX_dta)
+
+#candidates of sample sizes
+nvec <- c(5,10,15,20,25,30,35)
+```
+
+
+```{r,echo=F}
+#store vectors
+BIC.store <- data.frame("del1"=NA,
+                "del2"=NA)
+r.store <- c()
+```
+
+```{r}
+iters <- 1000
+# number of scenarios
+S <- 9
+seed <- sample(1:100000,iters, replace=F)
+
+unobserved_confounder=F
+```
+
+
+
+```{r,echo=F}
+DATA <- list()
+names <- c()
+## use only internal data
+IN_only_out <- array(NA, dim = c(S, iters, 5))
+## pool external data without any discount
+EX_pool_out <- array(NA, dim = c(S, iters, 5))
+## after IPW weighting
+ipw_out <- array(NA, dim = c(S, iters, 6))
+## IPW + MEM 
+mem_out <- array(NA, dim = c(S, iters, 6))
+
+for (n in 4){ #the optimal sample size is nvec[4]
+  for (e in 1:length(effect)){
+    power_tab <- mse_tab <- coverage_tab <- NULL
+    
+    for(s in 1:S){
+      ## sample size of internal treatment data:
+      IN_N1 <- 2*nvec[n]
+      ## sample size of internal control data:
+      IN_N0 <- nvec[n]
+      
+      ## scenario 1 (RCT)
+      if(s==1){
+        IN_des <- EX_des}
+      
+      ## scenario 2-3: there is one observed confounder with negative log(HR)
+      if(s==2){
+        IN_des$theta[6] <- 0.2}
+      if(s==3){
+        IN_des$theta[6] <- 0.8}
+      
+      ## scenario 4-5: there is one observed confounder with positive log(HR)
+      if(s==4){
+        IN_des$theta[5] <- 0.2}
+      if(s==5){
+        IN_des$theta[5] <- 0.8}
+      
+      ## scenario 6-7: there is one unobserved confounder with negative log(HR)
+      if(s==6){
+        IN_des$theta[8] <- 0.2}
+      if(s==7){
+        IN_des$theta[8] <- 0.8}
+      
+      ## scenario 8-9: there is one unobserved confounder with positive log(HR)
+      if(s==8){
+        IN_des$theta[7] <- 0.2}
+      if(s==9){
+        IN_des$theta[7] <- 0.8}
+      
+      if (unobserved_confounder==T){
+        if(s==1){
+        covariates <- paste(names(EX_dta)[1:8], collapse = "+")
+        ps_fm <- as.formula(paste("source ~ ", covariates))}
+      if(s==2|s==3){
+        covariates <- paste(names(EX_dta)[c(1,2,3,4,5,7,8)], collapse = "+")
+        ps_fm <- as.formula(paste("source ~ ", covariates))}
+      if(s==4|s==5){
+        covariates <- paste(names(EX_dta)[c(1,2,3,4,6,7,8)], collapse = "+")
+        ps_fm <- as.formula(paste("source ~ ", covariates))}
+      if(s==6|s==7){
+        covariates <- paste(names(EX_dta)[c(1,2,3,4,5,6,7)], collapse = "+")
+        ps_fm <- as.formula(paste("source ~ ", covariates))}
+      if(s==8|s==9){
+        covariates <- paste(names(EX_dta)[c(1,2,3,4,5,6,8)], collapse = "+")
+        ps_fm <- as.formula(paste("source ~ ", covariates))}
+      }else{
+        covariates <- paste(names(EX_dta)[1:8], collapse = "+")
+        ps_fm <- as.formula(paste("source ~ ", covariates))} 
+      
+      
+  
+  for(i in 1:iters){
+    ################################ Simulate internal data ################################ 
+    IN_dta <- gen_surv_dat(dta_des = IN_des, 
+                           TE = effect[e], 
+                           seeds = seed[i], 
+                           rho = 0.1, 
+                           censor_t = censor_t, 
+                           n = IN_N0+IN_N1,
+                           N0=IN_N0, N1=IN_N1,
+                           source = "internal")
+    tmp <- rbind(EX_dta, IN_dta)
+    
+    tmp$source <- rep(c(0, 1), times = c(EX_N, IN_N0+IN_N1))
+    
+    names <- c(names,paste0("Sce",s,"_TE=",effect[e],"_",i))
+    DATA <- append(DATA,list(tmp))
+    
+    ################################ Estimate ps ################################ 
+    ps_mod <- glm(ps_fm, data = tmp, family = binomial(link = "logit"))
+    tmp$ps <- predict(ps_mod, type = "response")
+    
+    ################################ Trimming ###################################
+    minmax_ps <- summary(tmp$ps[tmp$source==1])[c(1,6)]
+    trim <- (tmp[which(tmp$source==0),]$ps<minmax_ps[1])|(tmp[which(tmp$source==0),]$ps>minmax_ps[2])
+    trim <- c(trim,rep(F,IN_N0+IN_N1))
+    trimmed_tmp <- tmp[!trim,]
+    
+    ############################ Estimate IPW weights ################################  
+    trimmed_tmp$wt <- ifelse(trimmed_tmp$source == 1, 1, trimmed_tmp$ps/(1-trimmed_tmp$ps))
+
+    ############################ Estimate MEM weights ################################  
+    #in same block
+    reg1 <- survreg(Surv(t, d) ~ 1, dist = "weibull", weights = wt, robust = TRUE,
+                    data = trimmed_tmp[trimmed_tmp$Z==0, ])
+    #in different block
+    reg2 <- survreg(Surv(t, d) ~ source, dist = "weibull", weights = wt, robust = TRUE,
+                    data = trimmed_tmp[trimmed_tmp$Z==0, ])
+    
+    #bic1 <- -2*(reg1$loglik[2])+log(sum(trimmed_tmp$wt))
+    #bic2 <- -2*(reg2$loglik[2])+2*log(IN_N0+IN_N1)
+    
+    bic <- c(BIC(reg1), BIC(reg2))
+    BIC.store <- rbind(BIC.store,bic)
+    
+    r <- exp(-0.5*bic[1])/(exp(-0.5*bic[1])+exp(-0.5*bic[2]))
+    r.store <- c(r.store,r)
+    
+    ##############################################################################
+    ##IPW:
+    cox_msm <- coxph(Surv(t, d) ~ Z, weights = wt, robust = TRUE, data = trimmed_tmp)
+    ipw_out[s, i, ] <- summary(cox_msm)$coef
+   
+        
+    ##############################################################################
+    ##MEM: 
+    trimmed_tmp$mem_wt <- ifelse(trimmed_tmp$source==1, 1, trimmed_tmp$wt*r)
+    
+    which_min <- which(bic==min(bic))
+    if (which_min==1){
+      cox_mem <- coxph(Surv(t, d) ~ Z, weights = mem_wt, robust = TRUE, data = trimmed_tmp)
+      mem_out[s, i, ] <- summary(cox_mem)$coef
+    }
+    else{
+      cox_mem <- coxph(Surv(t, d) ~ Z, weights = mem_wt, robust = TRUE, data = trimmed_tmp[trimmed_tmp$source==1, ])
+      mem_out[s, i, ] <- summary(cox_mem)$coef
+    }
+    
+    
+    ##############################################################################
+    ##Internal data only: 
+    cox_in <- coxph(Surv(t, d) ~ Z, data = trimmed_tmp[trimmed_tmp$source==1, ])
+    IN_only_out[s, i, ] <- summary(cox_in)$coef
+    
+    
+    ##############################################################################
+    ##Pull all external data: 
+    cox_ex <- coxph(Surv(t, d) ~ Z, data = trimmed_tmp)
+    EX_pool_out[s, i, ] <- summary(cox_ex)$coef
+    
+  }
+    #print(s)
+      
+    
+    power_tab <- cbind(power_tab, 
+                   c(sum(IN_only_out[s, , 5]<0.05)/iters,
+                     sum(ipw_out[s, , 6]<0.05)/iters,
+                     sum(mem_out[s, , 6]<0.05)/iters,
+                     sum(EX_pool_out[s, , 5]<0.05)/iters))
+  
+  # mse_tab <- cbind(mse_tab, 
+  #                  c(mean((IN_only_out[s, , 1]-te)^2),
+  #                    mean((msm_out[s, , 1]-te)^2),
+  #                    mean((mem_out[s, , 1]-te)^2),
+  #                    mean((EX_pool_out[s, , 1]-te)^2)))
+  
+  # coverage_tab <- cbind(coverage_tab, 
+  #                 c(mean((IN_only_out[s, , 5]<te) & (IN_only_out[s, , 6]>te)),
+  #                   mean((msm_out[s, , 5]<te) & (msm_out[s, , 6]>te)),
+  #                   mean((mem_out[s, , 2]<te) & (mem_out[s, , 3]>te)),
+  #                   mean((EX_pool_out[s, , 5]<te) & (EX_pool_out[s, , 6]>te))))
+      }
+    rownames(power_tab) <- c("Internal only", "IPW", "MEM+IPW", "Pull all external")
+
+    colnames(power_tab) <- paste("Scenario-", 1:S, sep="")
+    
+    results <- list("power" = power_tab)
+    if (unobserved_confounder==T){
+      which_hypo <- c("NULL","ALT")
+      saveRDS(results, file=paste0("/Users/oliviazhang/Desktop/MEM/result/sim_surv_unobs_",which_hypo[e],".RData"))
+    }else{
+      which_hypo <- c("NULL","ALT")
+      saveRDS(results, file=paste0("/Users/oliviazhang/Desktop/MEM/result/sim_surv_",which_hypo[e],".RData"))
+      }
+    }
+  #print(e)
+  }
+names(DATA) <- names
+```
+
+
+```{r,echo=F, fig.width=4, fig.height=4}
+df <- readRDS(paste0("/Users/oliviazhang/Desktop/MEM/result/sim_surv_NULL.RData"))
+df2 <- readRDS(paste0("/Users/oliviazhang/Desktop/MEM/result/sim_surv_ALT.RData"))
+Rejection <- rbind(df$power,df2$power)
+
+Rejection <- melt(Rejection, id.vars = c(paste("Scenario-", 1:S, sep="")))
+Rejection$True_beta <- rep(c(rep("Null",4),
+                         rep("Alternative",4)),S)
+names(Rejection) <- c("Method","Scenario","value","True_beta")
+
+scenario_des <- as_labeller(c(
+  'Scenario-1'="Scenario 1: RCT",
+  'Scenario-2'="Scenario 2: strong negative confounder, P(=1)=0.8",
+  'Scenario-3'="Scenario 3: strong negative confounder, P(=1)=0.2",
+  'Scenario-4'="Scenario 4: strong postive confounder, P(=1)=0.2",
+  'Scenario-5'="Scenario 5: strong postive confounder, P(=1)=0.8",
+  'Scenario-6'="Scenario 6: medium negative confounder, P(=1)=0.2",
+  'Scenario-7'="Scenario 7: medium negative confounder, P(=1)=0.8",
+  'Scenario-8'="Scenario 8: medium postive confounder, P(=1)=0.2",
+  'Scenario-9'="Scenario 9: medium postive confounder, P(=1)=0.8"
+))
+
+print(ggplot(Rejection, aes(x=factor(True_beta,
+                               levels = c("Null","Alternative")), y=value, fill = Method)) +
+  geom_bar(stat="identity", position=position_dodge())+
+  facet_wrap(~Scenario, labeller = scenario_des, nrow =3) +
+  theme(legend.title = element_text(colour="black", size=40, face="bold"),
+        legend.text = element_text(size=6),
+        legend.key.size = unit(2, 'mm'),
+        legend.key.height = unit(2, 'mm'), 
+        legend.key.width = unit(2, 'mm'),
+        legend.position="bottom",
+        plot.title = element_text(size=10),
+        strip.text = element_text(size = 6))+
+  labs(title="Type I error and Power with NO unobserved confounders",
+       fill = "")+
+  xlab("")+
+  ylab("")+
+  scale_fill_discrete(labels = c("Internal only", "IPW", "MEM+IPW", "Pull all external"))+
+  geom_text(aes(label=value), position = position_dodge(0.9), size=2))
+```
+
+```{r, echo=F, fig.width=4, fig.height=4}
+df <- readRDS(paste0("/Users/oliviazhang/Desktop/MEM/result/sim_surv_unobs_NULL.RData"))
+df2 <- readRDS(paste0("/Users/oliviazhang/Desktop/MEM/result/sim_surv_unobs_ALT.RData"))
+Rejection <- rbind(df$power,df2$power)
+
+Rejection <- melt(Rejection, id.vars = c(paste("Scenario-", 1:S, sep="")))
+Rejection$True_beta <- rep(c(rep("Null",4),
+                         rep("Alternative",4)),S)
+names(Rejection) <- c("Method","Scenario","value","True_beta")
+
+
+print(ggplot(Rejection, aes(x=factor(True_beta,
+                               levels = c("Null","Alternative")), y=value, fill = Method)) +
+  geom_bar(stat="identity", position=position_dodge())+
+  facet_wrap(~Scenario, labeller = scenario_des, nrow =3) +
+  theme(legend.title = element_text(colour="black", size=4, face="bold"),
+        legend.text = element_text(size=6),
+        legend.key.size = unit(2, 'mm'),
+        legend.key.height = unit(2, 'mm'), 
+        legend.key.width = unit(2, 'mm'),
+        legend.position="bottom",
+        plot.title = element_text(size=10),
+        strip.text = element_text(size = 6))+
+  labs(title="Type I error and Power with unobserved confounders",
+       fill = "")+
+  xlab("")+
+  ylab("")+
+  scale_fill_discrete(labels = c("Internal only", "IPW", "MEM+IPW", "Pull all external"))+
+  geom_text(aes(label=value), position = position_dodge(0.9), size=2))
+```

@@ -1,0 +1,153 @@
+---
+title: "Result plots"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list=ls(all=TRUE))
+library(MASS)
+library(foreach)
+library(RBesT)
+library(ggpubr)
+library(TeachingDemos)
+library(PSweight)
+library(ggplot2)
+library(foreach)
+library(psrwe)
+library(survival)
+library(reshape2)
+```
+
+The simulation is done through 4 methods:
+
++ Method A: Compare internal treatment vs. internal control using regression (response ~ trt)
++ Method B: Simply combine internal control with external control and use regression (response ~ trt)
++ Method C: IPW weighting on external data
++ Method D: Our method, IPW weighting + MEM
+
+
+### With no unobserved confounders
+
+The simulation is done through 9 scenarios:
+
++ Scenario 1: 
+\
+assume internal data (treatment arm) arise from the same population as external
+
++ Scenario 2-3: 
+\
+there is 1 observed confounder with strong negative effect on the outcome, i.e. Pr(liver_met=1) = 0.2 or 0.8 for internal
+
++ Scenario 4-5: with observed confounders
+\
+there is 1 observed confounder with strong postive effect on the outcome, i.e. Pr(ras=1)= 0.2 or 0.8 for internal
+
++ Scenario 6-7: with unobserved confounders
+\
+there are 1 observed confounder with medium negative effect on the outcome, i.e. Pr(=1) = 0.2 or 0.8 for internal
+
++ Scenario 8-9: with unobserved confounders
+\
+there are 1 observed confounder with medium positive effect on the outcome, i.e. Pr(=1) = 0.2 or 0.8 for internal
+
+
+### With unobserved confounders
+
+The simulation is done through 9 scenarios:
+
++ Scenario 1: 
+\
+assume internal data (treatment arm) arise from the same population as external
+
++ Scenario 2-3: 
+\
+there is 1 unobserved confounder with strong negative effect on the outcome, i.e. Pr(liver_met=1) = 0.2 or 0.8 for internal
+
++ Scenario 4-5: 
+\
+there is 1 unobserved confounder with strong postive effect on the outcome, i.e. Pr(ras=1)= 0.2 or 0.8 for internal
+
++ Scenario 6-7: 
+\
+there are 1 unobserved confounder with medium negative effect on the outcome, i.e. Pr(=1) = 0.2 or 0.8 for internal
+
++ Scenario 8-9:
+\
+there are 1 unobserved confounder with medium positive effect on the outcome, i.e. Pr(=1) = 0.2 or 0.8 for internal
+
+```{r,echo=F, fig.width=60, fig.height=60}
+S <- 9
+df <- readRDS(paste0("/Users/oliviazhang/Desktop/MEM/result/sim_surv_NULL.RData"))
+df2 <- readRDS(paste0("/Users/oliviazhang/Desktop/MEM/result/sim_surv_ALT.RData"))
+Rejection <- rbind(df$power,df2$power)
+
+Rejection <- melt(Rejection, id.vars = c(paste("Scenario-", 1:S, sep="")))
+Rejection$True_beta <- rep(c(rep("Null",4),
+                         rep("Alternative",4)),S)
+names(Rejection) <- c("Method","Scenario","value","True_beta")
+
+scenario_des <- as_labeller(c(
+  'Scenario-1'="Scenario 1: RCT",
+  'Scenario-2'="Scenario 2: strong negative confounder, P(=1)=0.8",
+  'Scenario-3'="Scenario 3: strong negative confounder, P(=1)=0.2",
+  'Scenario-4'="Scenario 4: strong postive confounder, P(=1)=0.2",
+  'Scenario-5'="Scenario 5: strong postive confounder, P(=1)=0.8",
+  'Scenario-6'="Scenario 6: medium negative confounder, P(=1)=0.2",
+  'Scenario-7'="Scenario 7: medium negative confounder, P(=1)=0.8",
+  'Scenario-8'="Scenario 8: medium postive confounder, P(=1)=0.2",
+  'Scenario-9'="Scenario 9: medium postive confounder, P(=1)=0.8"
+))
+
+print(ggplot(Rejection, aes(x=factor(True_beta,
+                               levels = c("Null","Alternative")), y=value, fill = Method)) +
+  geom_bar(stat="identity", position=position_dodge())+
+  facet_wrap(~Scenario, labeller = scenario_des, nrow =3) +
+  theme(legend.title = element_text(colour="black", size=40, face="bold"),
+        legend.text = element_text(size=60),
+        legend.key.size = unit(2, 'cm'),
+        legend.key.height = unit(2, 'cm'), 
+        legend.key.width = unit(2, 'cm'),
+        legend.position="bottom",
+        plot.title = element_text(size=100),
+        strip.text = element_text(size = 60))+
+  labs(title="Type I error and Power with NO unobserved confounders",
+       fill = "")+
+  xlab("")+
+  ylab("")+
+  scale_fill_discrete(labels = c("Internal only", "IPW", "MEM+IPW", "Pull all external"))+
+  geom_text(aes(label=value), position = position_dodge(0.9), size=20))
+```
+
+```{r, echo=F, fig.width=60, fig.height=60}
+df <- readRDS(paste0("/Users/oliviazhang/Desktop/MEM/result/sim_surv_unobs_NULL.RData"))
+df2 <- readRDS(paste0("/Users/oliviazhang/Desktop/MEM/result/sim_surv_unobs_ALT.RData"))
+Rejection <- rbind(df$power,df2$power)
+
+Rejection <- melt(Rejection, id.vars = c(paste("Scenario-", 1:S, sep="")))
+Rejection$True_beta <- rep(c(rep("Null",4),
+                         rep("Alternative",4)),S)
+names(Rejection) <- c("Method","Scenario","value","True_beta")
+
+
+print(ggplot(Rejection, aes(x=factor(True_beta,
+                               levels = c("Null","Alternative")), y=value, fill = Method)) +
+  geom_bar(stat="identity", position=position_dodge())+
+  facet_wrap(~Scenario, labeller = scenario_des, nrow =3) +
+  theme(legend.title = element_text(colour="black", size=40, face="bold"),
+        legend.text = element_text(size=60),
+        legend.key.size = unit(2, 'cm'),
+        legend.key.height = unit(2, 'cm'), 
+        legend.key.width = unit(2, 'cm'),
+        legend.position="bottom",
+        plot.title = element_text(size=100),
+        strip.text = element_text(size = 60))+
+  labs(title="Type I error and Power with unobserved confounders",
+       fill = "")+
+  xlab("")+
+  ylab("")+
+  scale_fill_discrete(labels = c("Internal only", "IPW", "MEM+IPW", "Pull all external"))+
+  geom_text(aes(label=value), position = position_dodge(0.9), size=20))
+```
